@@ -176,6 +176,10 @@ pub const ModeTag = packed struct(u16) {
 };
 
 pub fn modeFromInt(v: u16, ansi: bool) ?Mode {
+    if (v == 25 and ansi) {
+        return .cursor_visible;
+    }
+
     inline for (entries) |entry| {
         if (comptime !entry.disabled) {
             if (entry.value == v and entry.ansi == ansi) {

@@ -451,7 +451,9 @@ pub const Handler = struct {
             .active_status_display => self.terminal.status_display = value,
             .decaln => try self.terminal.decaln(),
             .full_reset => {
+                const pwd_changed = self.terminal.getPwd() != null;
                 self.terminal.fullReset();
+                if (pwd_changed) self.notifyPwdChanged();
 
                 // Full reset clears grants
                 self.kitty_clipboard_grants.deinit(self.terminal.gpa());
@@ -1497,6 +1499,10 @@ pub const Handler = struct {
         // getPwd() and are responsible for decoding any URI scheme.
         try self.terminal.setPwd(url);
 
+        self.notifyPwdChanged();
+    }
+
+    fn notifyPwdChanged(self: *Handler) void {
         const func = self.effects.pwd_changed orelse return;
         func(self);
     }
