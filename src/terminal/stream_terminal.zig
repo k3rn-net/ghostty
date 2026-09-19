@@ -730,8 +730,10 @@ pub const Handler = struct {
             .full_reset => {
                 // A reset turns off synchronized output, ending its hold.
                 const sync = self.terminal.modes.get(.synchronized_output);
+                const pwd_changed = self.terminal.getPwd() != null;
                 self.terminal.fullReset();
                 if (sync) self.renderHold(false);
+                if (pwd_changed) self.notifyPwdChanged();
 
                 // Full reset clears grants
                 self.kitty_clipboard_grants.deinit(self.terminal.gpa());
@@ -1918,6 +1920,10 @@ pub const Handler = struct {
         // getPwd() and are responsible for decoding any URI scheme.
         try self.terminal.setPwd(url);
 
+        self.notifyPwdChanged();
+    }
+
+    fn notifyPwdChanged(self: *Handler) void {
         const func = self.effects.pwd_changed orelse return;
         func(self);
     }

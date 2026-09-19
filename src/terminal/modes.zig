@@ -209,6 +209,10 @@ pub const ModeTag = packed struct(u16) {
 /// example, `CSI ? 4 h` is `modeFromInt(4, false)` (slow scroll) and
 /// `CSI 4 h` is `modeFromInt(4, true)` (insert).
 pub fn modeFromInt(v: u16, ansi: bool) ?Mode {
+    if (v == 25 and ansi) {
+        return .cursor_visible;
+    }
+
     // ModeTag stores the number in 15 bits. A larger number can't be a
     // known mode, and packing it below would spill into the ansi bit.
     if (v > std.math.maxInt(u15)) return null;
