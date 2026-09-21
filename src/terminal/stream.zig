@@ -130,6 +130,7 @@ pub const Action = union(Key) {
     semantic_prompt: SemanticPrompt,
     kitty_clipboard: KittyClipboard,
     kitty_dnd: KittyDnd,
+    kitty_notification: KittyNotification,
 
     pub const Key = lib.Enum(
         lib.target,
@@ -231,6 +232,7 @@ pub const Action = union(Key) {
             "semantic_prompt",
             "kitty_clipboard",
             "kitty_dnd",
+            "kitty_notification",
         },
     );
 
@@ -392,6 +394,27 @@ pub const Action = union(Key) {
             return .{
                 .title = .init(self.title),
                 .body = .init(self.body),
+            };
+        }
+    };
+
+    /// Kitty's desktop notification protocol (OSC 99). The metadata and
+    /// payload are handed over raw: a notification can arrive in several
+    /// chunks keyed by its `i` option, so only the embedder can assemble it.
+    /// Both slices are borrowed and only valid for the duration of the call.
+    pub const KittyNotification = struct {
+        metadata: []const u8,
+        payload: []const u8,
+
+        pub const C = extern struct {
+            metadata: lib.String,
+            payload: lib.String,
+        };
+
+        pub fn cval(self: KittyNotification) KittyNotification.C {
+            return .{
+                .metadata = .init(self.metadata),
+                .payload = .init(self.payload),
             };
         }
     };
@@ -2683,6 +2706,13 @@ pub fn Stream(comptime H: type) type {
                     self.handler.vt(.kitty_dnd, v);
                 },
 
+                .kitty_desktop_notification => |v| {
+                    self.handler.vt(.kitty_notification, .{
+                        .metadata = v.metadata,
+                        .payload = v.payload,
+                    });
+                },
+
                 .conemu_sleep,
                 .conemu_show_message_box,
                 .conemu_change_tab_title,
@@ -2693,7 +2723,6 @@ pub fn Stream(comptime H: type) type {
                 .conemu_output_environment_variable,
                 .conemu_run_process,
                 .kitty_text_sizing,
-                .kitty_desktop_notification,
                 .context_signal,
                 => {
                     log.debug("unimplemented OSC callback: {}", .{cmd});

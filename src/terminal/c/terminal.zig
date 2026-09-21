@@ -178,6 +178,18 @@ pub const DesktopNotification = extern struct {
     body: lib.String,
 };
 
+/// One chunk of a Kitty desktop notification (OSC 99).
+///
+/// The metadata and payload are raw: a notification can arrive in several
+/// chunks keyed by its `i` option, so assembling it is the caller's job.
+///
+/// C: GhosttyTerminalKittyNotification
+pub const KittyNotification = extern struct {
+    size: usize,
+    metadata: lib.String,
+    payload: lib.String,
+};
+
 /// C: GhosttyTerminalProgressState
 pub const ProgressState = osc.Command.ProgressReport.State;
 
@@ -247,6 +259,7 @@ const Effects = struct {
     bell: ?BellFn = null,
     color_scheme: ?ColorSchemeFn = null,
     desktop_notification: ?DesktopNotificationFn = null,
+    kitty_notification: ?KittyNotificationFn = null,
     device_attributes_cb: ?DeviceAttributesFn = null,
     enquiry: ?EnquiryFn = null,
     xtversion: ?XtversionFn = null,
@@ -300,6 +313,10 @@ const Effects = struct {
     /// C function pointer type for the desktop_notification callback. The
     /// request and its strings are borrowed for the callback duration.
     pub const DesktopNotificationFn = *const fn (Terminal, ?*anyopaque, *const DesktopNotification) callconv(lib.calling_conv) void;
+
+    /// C function pointer type for the kitty_notification callback. The
+    /// chunk and its strings are borrowed for the callback duration.
+    pub const KittyNotificationFn = *const fn (Terminal, ?*anyopaque, *const KittyNotification) callconv(lib.calling_conv) void;
 
     /// C function pointer type for the title_changed callback.
     pub const TitleChangedFn = *const fn (Terminal, ?*anyopaque) callconv(lib.calling_conv) void;
@@ -528,6 +545,20 @@ const Effects = struct {
         func(@ptrCast(wrapper), wrapper.effects.userdata, &request);
     }
 
+    fn kittyNotificationTrampoline(
+        handler: *Handler,
+        notification: Action.KittyNotification,
+    ) void {
+        const wrapper = TerminalWrapper.fromHandler(handler);
+        const func = wrapper.effects.kitty_notification orelse return;
+        const chunk: KittyNotification = .{
+            .size = @sizeOf(KittyNotification),
+            .metadata = .init(notification.metadata),
+            .payload = .init(notification.payload),
+        };
+        func(@ptrCast(wrapper), wrapper.effects.userdata, &chunk);
+    }
+
     fn colorSchemeTrampoline(handler: *Handler) ?device_status.ColorScheme {
         const wrapper = TerminalWrapper.fromHandler(handler);
         const func = wrapper.effects.color_scheme orelse return null;
@@ -666,6 +697,7 @@ fn wrap(
         .bell = &Effects.bellTrampoline,
         .color_scheme = &Effects.colorSchemeTrampoline,
         .desktop_notification = &Effects.desktopNotificationTrampoline,
+        .kitty_notification = &Effects.kittyNotificationTrampoline,
         .drag_and_drop = null,
         .device_attributes = &Effects.deviceAttributesTrampoline,
         .enquiry = &Effects.enquiryTrampoline,
@@ -1175,6 +1207,7 @@ pub const Option = enum(c_int) {
     clipboard_read = 38,
     clipboard_write_max_bytes = 39,
     resize_pull_scrollback = 40,
+    kitty_notification = 41,
 
     /// Input type expected for setting the option.
     pub fn InType(comptime self: Option) type {
@@ -1184,6 +1217,7 @@ pub const Option = enum(c_int) {
             .bell => ?Effects.BellFn,
             .color_scheme => ?Effects.ColorSchemeFn,
             .desktop_notification => ?Effects.DesktopNotificationFn,
+            .kitty_notification => ?Effects.KittyNotificationFn,
             .device_attributes => ?Effects.DeviceAttributesFn,
             .enquiry => ?Effects.EnquiryFn,
             .xtversion => ?Effects.XtversionFn,
@@ -1255,6 +1289,7 @@ fn setTyped(
         .bell => wrapper.effects.bell = value,
         .color_scheme => wrapper.effects.color_scheme = value,
         .desktop_notification => wrapper.effects.desktop_notification = value,
+        .kitty_notification => wrapper.effects.kitty_notification = value,
         .device_attributes => wrapper.effects.device_attributes_cb = value,
         .enquiry => wrapper.effects.enquiry = value,
         .xtversion => wrapper.effects.xtversion = value,
