@@ -99,6 +99,7 @@ extern "C" {
  * | `GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE`  | `GhosttyTerminalClipboardWriteFn` | Clipboard write via OSC 52 / OSC 1337 / OSC 5522 |
  * | `GHOSTTY_TERMINAL_OPT_CLIPBOARD_READ`   | `GhosttyTerminalClipboardReadFn`  | Clipboard read via OSC 52 "?" / OSC 5522  |
  * | `GHOSTTY_TERMINAL_OPT_DESKTOP_NOTIFICATION`| `GhosttyTerminalDesktopNotificationFn` | Desktop notification via OSC 9 / OSC 777 |
+ * | `GHOSTTY_TERMINAL_OPT_KITTY_NOTIFICATION` | `GhosttyTerminalKittyNotificationFn` | Desktop notification chunk via OSC 99 |
  * | `GHOSTTY_TERMINAL_OPT_PROGRESS_REPORT`  | `GhosttyTerminalProgressReportFn` | Progress report via OSC 9;4               |
  * | `GHOSTTY_TERMINAL_OPT_PROGRAM_STATUS`   | `GhosttyTerminalProgramStatusFn`  | Program status report via OSC 7501        |
  * | `GHOSTTY_TERMINAL_OPT_UNKNOWN_SEQUENCE` | `GhosttyTerminalUnknownSequenceFn` | APC or OSC sequence that libghostty-vt does not implement (see Unsupported Sequences) |
@@ -1354,6 +1355,41 @@ typedef void (*GhosttyTerminalDesktopNotificationFn)(
     GhosttyTerminal terminal,
     void* userdata,
     const GhosttyTerminalDesktopNotification* notification);
+
+/**
+ * One chunk of a Kitty desktop notification (OSC 99).
+ *
+ * The metadata and payload are raw. A notification can arrive in several
+ * chunks keyed by its `i` option, so assembling it is the caller's job.
+ *
+ * @ingroup terminal
+ */
+typedef struct {
+  /** Size of this struct in bytes. */
+  size_t size;
+
+  /** Raw `key=value` metadata, without the trailing `;`. */
+  GhosttyString metadata;
+
+  /** Raw payload, still Base64 encoded when the `e` option says so. */
+  GhosttyString payload;
+} GhosttyTerminalKittyNotification;
+
+/**
+ * Callback function type for Kitty desktop notification chunks.
+ *
+ * Called synchronously for each OSC 99 the terminal receives.
+ *
+ * @param terminal The terminal handle
+ * @param userdata The userdata pointer set via GHOSTTY_TERMINAL_OPT_USERDATA
+ * @param notification Borrowed notification chunk
+ *
+ * @ingroup terminal
+ */
+typedef void (*GhosttyTerminalKittyNotificationFn)(
+    GhosttyTerminal terminal,
+    void* userdata,
+    const GhosttyTerminalKittyNotification* notification);
 
 /**
  * State of a terminal progress report.
@@ -2780,6 +2816,17 @@ typedef enum GHOSTTY_ENUM_TYPED {
    * Input type: GhosttyTerminalResizeWindowFn
    */
   GHOSTTY_TERMINAL_OPT_RESIZE_WINDOW = 47,
+
+  /**
+   * Set the callback invoked for each Kitty desktop notification chunk
+   * (OSC 99).
+   *
+   * Chunks are delivered raw, so the callback is responsible for decoding
+   * the payload and joining the chunks of one notification together.
+   *
+   * Input type: GhosttyTerminalKittyNotificationFn
+   */
+  GHOSTTY_TERMINAL_OPT_KITTY_NOTIFICATION = 48,
   GHOSTTY_TERMINAL_OPT_MAX_VALUE = GHOSTTY_ENUM_MAX_VALUE,
 } GhosttyTerminalOption;
 

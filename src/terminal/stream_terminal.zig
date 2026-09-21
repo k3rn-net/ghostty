@@ -178,6 +178,11 @@ pub const Handler = struct {
         /// valid for the duration of the callback.
         desktop_notification: ?*const fn (*Handler, Action.ShowDesktopNotification) void,
 
+        /// Called for each chunk of Kitty's desktop notification protocol
+        /// (OSC 99). Chunks are handed over raw because only the embedder
+        /// can hold the state a multi-chunk notification needs.
+        kitty_notification: ?*const fn (*Handler, Action.KittyNotification) void,
+
         /// Called when drag and drop protocol state changes in a way the
         /// embedder may need to act on: the running program registering
         /// or unregistering to accept drops, answering a drag, or
@@ -341,6 +346,7 @@ pub const Handler = struct {
             .clipboard_write = null,
             .color_scheme = null,
             .desktop_notification = null,
+            .kitty_notification = null,
             .device_attributes = null,
             .drag_and_drop = null,
             .enquiry = null,
@@ -776,6 +782,7 @@ pub const Handler = struct {
             // Effect-based handlers
             .bell => self.bell(),
             .show_desktop_notification => self.desktopNotification(value),
+            .kitty_notification => self.kittyNotification(value),
             .device_attributes => self.reportDeviceAttributes(value),
             .device_status => self.deviceStatus(value.request),
             .enquiry => self.reportEnquiry(),
@@ -967,6 +974,14 @@ pub const Handler = struct {
                 .err = cmd.readOption(.err) orelse "",
             }),
         }
+    }
+
+    fn kittyNotification(
+        self: *Handler,
+        notification: Action.KittyNotification,
+    ) void {
+        const func = self.effects.kitty_notification orelse return;
+        func(self, notification);
     }
 
     fn progressReport(self: *Handler, report: osc.Command.ProgressReport) void {
