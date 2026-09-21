@@ -188,6 +188,7 @@ pub const KittyNotification = extern struct {
     size: usize,
     metadata: lib.String,
     payload: lib.String,
+    terminator: lib.String,
 };
 
 /// C: GhosttyTerminalProgressState
@@ -555,6 +556,7 @@ const Effects = struct {
             .size = @sizeOf(KittyNotification),
             .metadata = .init(notification.metadata),
             .payload = .init(notification.payload),
+            .terminator = .init(notification.terminator),
         };
         func(@ptrCast(wrapper), wrapper.effects.userdata, &chunk);
     }

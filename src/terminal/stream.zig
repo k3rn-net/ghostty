@@ -405,16 +405,20 @@ pub const Action = union(Key) {
     pub const KittyNotification = struct {
         metadata: []const u8,
         payload: []const u8,
+        /// The terminator bytes the request used, so a reply can echo them.
+        terminator: []const u8,
 
         pub const C = extern struct {
             metadata: lib.String,
             payload: lib.String,
+            terminator: lib.String,
         };
 
         pub fn cval(self: KittyNotification) KittyNotification.C {
             return .{
                 .metadata = .init(self.metadata),
                 .payload = .init(self.payload),
+                .terminator = .init(self.terminator),
             };
         }
     };
@@ -2710,6 +2714,7 @@ pub fn Stream(comptime H: type) type {
                     self.handler.vt(.kitty_notification, .{
                         .metadata = v.metadata,
                         .payload = v.payload,
+                        .terminator = v.terminator.string(),
                     });
                 },
 
