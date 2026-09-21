@@ -1373,6 +1373,9 @@ typedef struct {
 
   /** Raw payload, still Base64 encoded when the `e` option says so. */
   GhosttyString payload;
+
+  /** The terminator bytes the request used, to echo in a reply. */
+  GhosttyString terminator;
 } GhosttyTerminalKittyNotification;
 
 /**
