@@ -5144,6 +5144,7 @@ pub fn fullReset(self: *Terminal) void {
     };
     self.setCursorStyle(.default);
     self.colors.palette.resetAll();
+    self.mouse_shape = .text;
 
     // Always mark dirty so we redraw everything
     self.flags.dirty.clear = true;
@@ -16349,6 +16350,15 @@ test "Terminal: fullReset hyperlink" {
     try t.screens.active.startHyperlink("http://example.com", null);
     t.fullReset();
     try testing.expectEqual(0, t.screens.active.cursor.hyperlink_id);
+}
+
+test "Terminal: fullReset mouse shape" {
+    var t = try init(testing.io, testing.allocator, .{ .cols = 80, .rows = 80 });
+    defer t.deinit(testing.allocator);
+
+    t.mouse_shape = .crosshair;
+    t.fullReset();
+    try testing.expectEqual(.text, t.mouse_shape);
 }
 
 test "Terminal: fullReset with a non-empty saved cursor" {
