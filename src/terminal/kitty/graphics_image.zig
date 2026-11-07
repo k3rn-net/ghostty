@@ -201,9 +201,12 @@ pub const LoadingImage = struct {
         t: command.Transmission,
         path: []const u8,
     ) !void {
+        if (comptime builtin.target.os.tag == .windows) {
+            return self.readSharedMemoryWindows(alloc, t, path);
+        }
+
         // android does not support POSIX shared memory.
-        // windows is currently unsupported, does it support shm?
-        if (comptime builtin.target.abi.isAndroid() or builtin.target.os.tag == .windows) {
+        if (comptime builtin.target.abi.isAndroid()) {
             return error.UnsupportedMedium;
         }
 
@@ -278,6 +281,59 @@ pub const LoadingImage = struct {
 
         assert(self.data.items.len == 0);
         try self.data.appendSlice(alloc, map[range.start..range.end]);
+    }
+
+    /// Reads the data from a named file mapping, the shared memory object
+    /// of the Kitty protocol on Windows. Unlike POSIX there is no unlink:
+    /// the mapping lives while any handle to it is open, so the terminal
+    /// closes its own and the client decides when its copy goes.
+    fn readSharedMemoryWindows(
+        self: *LoadingImage,
+        alloc: Allocator,
+        t: command.Transmission,
+        name: []const u8,
+    ) !void {
+        kitty_windows.checkSharedMemoryName(name) catch |err| {
+            log.warn("invalid shared memory name: {}", .{err});
+            return error.InvalidData;
+        };
+        var wide: [kitty_windows.shared_memory_name_max + 1]u16 = undefined;
+        const len = std.unicode.utf8ToUtf16Le(
+            wide[0..kitty_windows.shared_memory_name_max],
+            name,
+        ) catch return error.InvalidData;
+        wide[len] = 0;
+
+        const mapping = win.OpenFileMappingW(win.FILE_MAP_READ, 0, wide[0..len :0]) orelse {
+            log.warn("unable to open shared memory {s}: {}", .{ name, win.GetLastError() });
+            return error.InvalidData;
+        };
+        defer _ = win.CloseHandle(mapping);
+
+        const view = win.MapViewOfFile(mapping, win.FILE_MAP_READ, 0, 0, 0) orelse {
+            log.warn("unable to map shared memory {s}: {}", .{ name, win.GetLastError() });
+            return error.InvalidData;
+        };
+        defer _ = win.UnmapViewOfFile(view);
+
+        // A view is whole pages, so its size, like fstat's on POSIX, may
+        // be more than the client wrote; the range below stays within it.
+        var info: win.MEMORY_BASIC_INFORMATION = undefined;
+        if (win.VirtualQuery(view, &info, @sizeOf(win.MEMORY_BASIC_INFORMATION)) == 0) {
+            return error.InvalidData;
+        }
+        // A client can make a mapping whose pages are reserved but not
+        // committed (SEC_RESERVE); reading those would fault, so only the
+        // committed region at the start of the view is read.
+        if (info.State != win.MEM_COMMIT) {
+            log.warn("shared memory {s} is not committed", .{name});
+            return error.InvalidData;
+        }
+        const range = try self.sharedMemoryRange(t, info.RegionSize);
+
+        assert(self.data.items.len == 0);
+        const bytes: [*]const u8 = @ptrCast(view);
+        try self.data.appendSlice(alloc, bytes[range.start..range.end]);
     }
 
     const SharedMemoryRange = struct {
@@ -937,6 +993,36 @@ pub const Rect = struct {
     }
 };
 
+/// The Win32 calls that read a named file mapping. Declared here rather
+/// than taken from std, which does not have them all.
+const win = struct {
+    const HANDLE = *anyopaque;
+    const DWORD = u32;
+    const BOOL = i32;
+    const FILE_MAP_READ: DWORD = 0x0004;
+    const FILE_MAP_WRITE: DWORD = 0x0002;
+    const PAGE_READWRITE: DWORD = 0x04;
+    const MEM_COMMIT: DWORD = 0x1000;
+    const INVALID_HANDLE_VALUE: HANDLE = @ptrFromInt(std.math.maxInt(usize));
+    const MEMORY_BASIC_INFORMATION = extern struct {
+        BaseAddress: ?*anyopaque,
+        AllocationBase: ?*anyopaque,
+        AllocationProtect: DWORD,
+        PartitionId: u16,
+        RegionSize: usize,
+        State: DWORD,
+        Protect: DWORD,
+        Type: DWORD,
+    };
+    extern "kernel32" fn OpenFileMappingW(access: DWORD, inherit: BOOL, name: [*:0]const u16) callconv(.winapi) ?HANDLE;
+    extern "kernel32" fn CreateFileMappingW(file: HANDLE, attributes: ?*anyopaque, protect: DWORD, high: DWORD, low: DWORD, name: [*:0]const u16) callconv(.winapi) ?HANDLE;
+    extern "kernel32" fn MapViewOfFile(mapping: HANDLE, access: DWORD, high: DWORD, low: DWORD, bytes: usize) callconv(.winapi) ?*anyopaque;
+    extern "kernel32" fn UnmapViewOfFile(view: *const anyopaque) callconv(.winapi) BOOL;
+    extern "kernel32" fn VirtualQuery(address: *const anyopaque, info: *MEMORY_BASIC_INFORMATION, length: usize) callconv(.winapi) usize;
+    extern "kernel32" fn CloseHandle(handle: HANDLE) callconv(.winapi) BOOL;
+    extern "kernel32" fn GetLastError() callconv(.winapi) DWORD;
+};
+
 /// Returns whether a name can be passed to shm_open. Slashes are left
 /// for shm_open to judge since the valid forms are platform specific.
 fn validSharedMemoryName(name: []const u8, name_max: usize) bool {
@@ -1105,6 +1191,81 @@ test "image load accepts shared memory names without a leading slash" {
     );
     if (reopened >= 0) _ = std.c.close(reopened);
     try testing.expectEqual(std.posix.E.NOENT, std.posix.errno(reopened));
+}
+
+/// A named mapping holding `data`, as a client makes one, for the tests.
+fn testMapping(name: [:0]const u16, data: []const u8) !win.HANDLE {
+    const mapping = win.CreateFileMappingW(win.INVALID_HANDLE_VALUE, null, win.PAGE_READWRITE, 0, @intCast(data.len), name) orelse
+        return error.SkipZigTest;
+    const view = win.MapViewOfFile(mapping, win.FILE_MAP_WRITE, 0, 0, data.len) orelse {
+        _ = win.CloseHandle(mapping);
+        return error.SkipZigTest;
+    };
+    @memcpy(@as([*]u8, @ptrCast(view))[0..data.len], data);
+    _ = win.UnmapViewOfFile(view);
+    return mapping;
+}
+
+test "image load reads a named file mapping on Windows" {
+    if (comptime builtin.target.os.tag != .windows) return error.SkipZigTest;
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    const mapping = try testMapping(std.unicode.utf8ToUtf16LeStringLiteral("ghostty-test-shm-read"), "\x01\x02\x03\x04\x05\x06");
+    defer _ = win.CloseHandle(mapping);
+
+    var cmd: command.Command = .{
+        .control = .{ .transmit = .{
+            .format = .rgb,
+            .medium = .shared_memory,
+            .width = 1,
+            .height = 1,
+            .image_id = 31,
+            .offset = 3,
+        } },
+        .data = try alloc.dupe(u8, "ghostty-test-shm-read"),
+    };
+    defer cmd.deinit(alloc);
+
+    var loading = try LoadingImage.init(testing.io, alloc, &cmd, .{
+        .file = false,
+        .temporary_file = .disabled,
+        .shared_memory = true,
+    });
+    defer loading.deinit(alloc);
+    try testing.expectEqualSlices(u8, "\x04\x05\x06", loading.data.items);
+}
+
+test "image load refuses a Windows mapping that is missing, elsewhere, or off" {
+    if (comptime builtin.target.os.tag != .windows) return error.SkipZigTest;
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    const mapping = try testMapping(std.unicode.utf8ToUtf16LeStringLiteral("ghostty-test-shm-off"), "\x01\x02\x03");
+    defer _ = win.CloseHandle(mapping);
+
+    for ([_]struct { name: []const u8, allowed: bool, err: anyerror }{
+        .{ .name = "ghostty-test-shm-missing", .allowed = true, .err = error.InvalidData },
+        .{ .name = "Global\\ghostty-test-shm-off", .allowed = true, .err = error.InvalidData },
+        .{ .name = "ghostty-test-shm-off", .allowed = false, .err = error.UnsupportedMedium },
+    }) |case| {
+        var cmd: command.Command = .{
+            .control = .{ .transmit = .{
+                .format = .rgb,
+                .medium = .shared_memory,
+                .width = 1,
+                .height = 1,
+                .image_id = 31,
+            } },
+            .data = try alloc.dupe(u8, case.name),
+        };
+        defer cmd.deinit(alloc);
+        try testing.expectError(case.err, LoadingImage.init(testing.io, alloc, &cmd, .{
+            .file = false,
+            .temporary_file = .disabled,
+            .shared_memory = case.allowed,
+        }));
+    }
 }
 
 test "shared memory range with offset and size" {

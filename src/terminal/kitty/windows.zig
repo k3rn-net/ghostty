@@ -1,5 +1,5 @@
-//! Windows path checks for the Kitty graphics protocol file and
-//! temporary file mediums.
+//! Windows checks for the Kitty graphics protocol's file, temporary
+//! file and shared memory mediums.
 //!
 //! On POSIX the file transmission blocklist is a few prefixes
 //! (`/proc`, `/sys`, `/dev`) applied to the canonical path of the
@@ -79,6 +79,35 @@ pub fn isDriveAbsolute(path: []const u8) bool {
         path[2] == '\\';
 }
 
+/// The longest shared memory name a client may send, in bytes. Windows
+/// takes object names of up to MAX_PATH characters.
+pub const shared_memory_name_max = 260;
+
+pub const SharedMemoryNameError = error{
+    /// Empty, longer than `shared_memory_name_max`, or with a NUL.
+    InvalidSharedMemoryName,
+
+    /// A name in another namespace than the session's own: `Global\`,
+    /// `Session\N\`, a private namespace, or any other path. On Windows
+    /// a client names the mapping it made, and it made it in its session.
+    SharedMemoryNameOutsideSession,
+};
+
+/// Check the name of a shared memory object a client asks the terminal
+/// to read: a plain name, or one in `Local\`, the session's own
+/// namespace. What the name may reach is still only what this user may
+/// open; this keeps a client from steering the read anywhere else.
+pub fn checkSharedMemoryName(name: []const u8) SharedMemoryNameError!void {
+    if (name.len == 0 or name.len > shared_memory_name_max) return error.InvalidSharedMemoryName;
+    if (std.mem.indexOfScalar(u8, name, 0) != null) return error.InvalidSharedMemoryName;
+    const local = "Local\\";
+    const plain = if (name.len > local.len and std.ascii.startsWithIgnoreCase(name, local))
+        name[local.len..]
+    else
+        name;
+    if (std.mem.indexOfAny(u8, plain, "\\/") != null) return error.SharedMemoryNameOutsideSession;
+}
+
 /// Returns true if `c` is a Windows path separator.
 fn isSep(c: u8) bool {
     return std.fs.path.PathType.windows.isSep(u8, c);
@@ -111,6 +140,27 @@ fn isReservedDeviceName(component: []const u8) bool {
             (rest[1] == 0xB9 or rest[1] == 0xB2 or rest[1] == 0xB3),
         else => false,
     };
+}
+
+test "checkSharedMemoryName takes a plain name or one of the session's own" {
+    try checkSharedMemoryName("kitty-123-4");
+    try checkSharedMemoryName("Local\\kitty-123-4");
+    try checkSharedMemoryName("local\\kitty");
+    const longest: [shared_memory_name_max]u8 = @splat('a');
+    try checkSharedMemoryName(&longest);
+}
+
+test "checkSharedMemoryName refuses other namespaces and malformed names" {
+    const testing = std.testing;
+    try testing.expectError(error.InvalidSharedMemoryName, checkSharedMemoryName(""));
+    try testing.expectError(error.InvalidSharedMemoryName, checkSharedMemoryName("kitty\x00image"));
+    const too_long: [shared_memory_name_max + 1]u8 = @splat('a');
+    try testing.expectError(error.InvalidSharedMemoryName, checkSharedMemoryName(&too_long));
+    try testing.expectError(error.SharedMemoryNameOutsideSession, checkSharedMemoryName("Global\\kitty"));
+    try testing.expectError(error.SharedMemoryNameOutsideSession, checkSharedMemoryName("Session\\2\\kitty"));
+    try testing.expectError(error.SharedMemoryNameOutsideSession, checkSharedMemoryName("Local\\a\\b"));
+    try testing.expectError(error.SharedMemoryNameOutsideSession, checkSharedMemoryName("Local\\"));
+    try testing.expectError(error.SharedMemoryNameOutsideSession, checkSharedMemoryName("ns/kitty"));
 }
 
 test "checkPath rejects UNC paths" {
