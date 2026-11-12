@@ -3260,6 +3260,19 @@ typedef enum GHOSTTY_ENUM_TYPED {
    * Output type: GhosttyTerminalMemoryUsage *
    */
   GHOSTTY_TERMINAL_DATA_MEMORY_USAGE = 42,
+
+  /**
+   * Whether the application asked for the mouse pointer shape that
+   * GHOSTTY_TERMINAL_DATA_MOUSE_SHAPE gives, through OSC 22 with a name,
+   * and has not given it back since, through OSC 22 with none or a reset.
+   *
+   * The resting shape is GHOSTTY_MOUSE_SHAPE_TEXT, so the shape alone
+   * cannot tell an application that asked for the text shape from one
+   * that asked for nothing.
+   *
+   * Output type: bool *
+   */
+  GHOSTTY_TERMINAL_DATA_MOUSE_SHAPE_REQUESTED = 43,
   GHOSTTY_TERMINAL_DATA_MAX_VALUE = GHOSTTY_ENUM_MAX_VALUE,
 } GhosttyTerminalData;
 

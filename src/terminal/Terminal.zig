@@ -93,6 +93,13 @@ default_xt_checksum: xt_checksum.Flags = .{},
 /// The most recently set mouse shape for the terminal.
 mouse_shape: mouse.Shape = .text,
 
+/// Whether the application asked for `mouse_shape` (OSC 22 with a name)
+/// and hasn't since given it back (OSC 22 with none, or a reset). The
+/// resting shape is `.text`, so the shape alone cannot tell an
+/// application that asked for the text shape from one that asked for
+/// nothing.
+mouse_shape_requested: bool = false,
+
 /// Per-session Glyph Protocol registrations.
 glyph_glossary: glyph.Glossary = .empty,
 
@@ -5145,6 +5152,7 @@ pub fn fullReset(self: *Terminal) void {
     self.setCursorStyle(.default);
     self.colors.palette.resetAll();
     self.mouse_shape = .text;
+    self.mouse_shape_requested = false;
 
     // Always mark dirty so we redraw everything
     self.flags.dirty.clear = true;
@@ -16357,8 +16365,10 @@ test "Terminal: fullReset mouse shape" {
     defer t.deinit(testing.allocator);
 
     t.mouse_shape = .crosshair;
+    t.mouse_shape_requested = true;
     t.fullReset();
     try testing.expectEqual(.text, t.mouse_shape);
+    try testing.expect(!t.mouse_shape_requested);
 }
 
 test "Terminal: fullReset with a non-empty saved cursor" {

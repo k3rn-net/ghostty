@@ -2003,6 +2003,7 @@ pub const TerminalData = enum(c_int) {
     clipboard_write_max_bytes = 40,
     mouse_shape = 41,
     memory_usage = 42,
+    mouse_shape_requested = 43,
 
     /// Output type expected for querying the data of the given kind.
     pub fn OutType(comptime self: TerminalData) type {
@@ -2016,6 +2017,7 @@ pub const TerminalData = enum(c_int) {
             .vt_processing_error,
             .vt_ground,
             .cursor_at_prompt,
+            .mouse_shape_requested,
             => bool,
             .mouse_shape => mouse.Shape,
             .active_screen => TerminalScreen,
@@ -2121,6 +2123,7 @@ fn getTyped(
             t.modes.get(.mouse_event_button) or
             t.modes.get(.mouse_event_any),
         .mouse_shape => out.* = t.mouse_shape,
+        .mouse_shape_requested => out.* = t.mouse_shape_requested,
         .title => {
             const title = t.getTitle() orelse "";
             out.* = .{ .ptr = title.ptr, .len = title.len };
@@ -7947,4 +7950,29 @@ test "get mouse_shape" {
     vt_write(t, "\x07", 1);
     try testing.expectEqual(Result.success, get(t, .mouse_shape, @ptrCast(&shape)));
     try testing.expectEqual(mouse.Shape.wait, shape);
+}
+
+test "get mouse_shape_requested" {
+    var t: Terminal = null;
+    try testing.expectEqual(Result.success, new(&lib.alloc.test_allocator, &t, 80, 24));
+    defer free(t);
+
+    var requested: bool = true;
+    try testing.expectEqual(Result.success, get(t, .mouse_shape_requested, @ptrCast(&requested)));
+    try testing.expect(!requested);
+
+    const cases = .{
+        // The text shape asked for by name is a request, though the shape is the resting one.
+        .{ "\x1b]22;text\x07", true },
+        .{ "\x1b]22;\x1b\\", false },
+        .{ "\x1b]22;crosshair\x07", true },
+        // An unknown name leaves the last request standing.
+        .{ "\x1b]22;not-a-pointer-shape\x07", true },
+        .{ "\x1bc", false },
+    };
+    inline for (cases) |case| {
+        vt_write(t, case[0], case[0].len);
+        try testing.expectEqual(Result.success, get(t, .mouse_shape_requested, @ptrCast(&requested)));
+        try testing.expectEqual(case[1], requested);
+    }
 }

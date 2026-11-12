@@ -754,8 +754,14 @@ pub const Handler = struct {
             .start_hyperlink => try self.terminal.screens.active.startHyperlink(value.uri, value.id),
             .end_hyperlink => self.terminal.screens.active.endHyperlink(),
             .semantic_prompt => try self.semanticPrompt(value),
-            .mouse_shape => self.terminal.mouse_shape = value,
-            .mouse_shape_reset => self.terminal.mouse_shape = .text,
+            .mouse_shape => {
+                self.terminal.mouse_shape = value;
+                self.terminal.mouse_shape_requested = true;
+            },
+            .mouse_shape_reset => {
+                self.terminal.mouse_shape = .text;
+                self.terminal.mouse_shape_requested = false;
+            },
             .color_operation => self.colorOperation(
                 &value.requests,
                 value.terminator,
